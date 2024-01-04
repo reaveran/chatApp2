@@ -8,6 +8,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ViewToken,
 } from "react-native";
 import { commonStyles, variables } from "src/CommonStyles";
 import { useGroupDetail } from "./hooks/useGroupDetail";
@@ -18,6 +19,8 @@ import { ChatMessage } from "./components/ChatMessage";
 import { ChatFooter } from "./components/ChatFooter";
 import { useDebounceCallback } from "@utils";
 import { ChatFooterSearch } from "./components/ChatFooterSearch";
+import { useFocusEffect } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // user id to differentiate message bubble color
 const selfId = "me-id";
@@ -40,6 +43,9 @@ export const ChatDetailScreen: Navigation.Screen<"ChatDetailScreen"> = (props) =
   } = useChatDetail(id);
   const searchInputRef = useRef<TextInput>(null);
   const sectionList = useRef<SectionList>(null);
+  // const [scrollPosition, setScrollPosition] = useState<number>();
+  const [scrollPosition, setScrollPosition] = useState<LocationIndex>({ sectionIndex: 0, itemIndex: 0 });
+  const [isScrolled, setIsScrolled] = useState<boolean>(false);
 
   const [isSearchActive, setIsSearchActive] = useState<boolean>(false);
   const [isSearchLastIndex, setIsSearchLastIndex] = useState<boolean>(true);
@@ -59,7 +65,7 @@ export const ChatDetailScreen: Navigation.Screen<"ChatDetailScreen"> = (props) =
     setActiveSearchIndex(0);
     setIsSearchFirstIndex(true);
     setIsSearchLastIndex(true);
-  }
+  };
 
   const debounceSearchText = useDebounceCallback((value: string) => {
     const result: LocationIndex[] = [];
@@ -93,6 +99,37 @@ export const ChatDetailScreen: Navigation.Screen<"ChatDetailScreen"> = (props) =
       setSectionsData(messages);
     }
   }, [messages]);
+
+  const getLastActiveScroll = useCallback(async () => {
+    try {
+      const value = await AsyncStorage.getItem("lastActiveScroll");
+      const sectionIndex = parseInt(value || "0");
+      if (sectionIndex > 0 && sectionsData.length > sectionIndex && sectionList?.current && !isScrolled) {
+        setIsScrolled(true);
+        setTimeout(() => {
+          sectionList?.current?.scrollToLocation({ sectionIndex: sectionIndex, itemIndex: 1 });
+        }, 500);
+      }
+    } catch (error) {
+      // Handle AsyncStorage error
+      return null;
+    }
+  }, [sectionList?.current, isScrolled, sectionsData.length]);
+
+  // Save scroll position when leaving the screen
+  useEffect(() => {
+    return () => {
+      // This function will be called when the component unmounts
+      if (scrollPosition) {
+        AsyncStorage.setItem("lastActiveScroll", scrollPosition.toString());
+      }
+    };
+  }, [scrollPosition]);
+
+  // Restore scroll position when returning to the screen
+  useEffect(() => {
+    getLastActiveScroll();
+  }, [getLastActiveScroll]);
 
   const onSearch = (value: string) => {
     onChangeSearchText(value);
@@ -235,6 +272,11 @@ export const ChatDetailScreen: Navigation.Screen<"ChatDetailScreen"> = (props) =
     [searchIndex, activeSearchIndex]
   );
 
+  const onViewableItemsChanged = useCallback((info: { viewableItems: ViewToken[] }): void => {
+    if (info.viewableItems.length > 0) {
+      setScrollPosition(info.viewableItems[0]?.section?.sectionIndex);
+    }
+  }, []);
   return (
     <BaseLayout
       leftHeader={isSearchActive ? leftCloseHeader() : <BackHeaderButton />}
@@ -276,6 +318,16 @@ export const ChatDetailScreen: Navigation.Screen<"ChatDetailScreen"> = (props) =
         onEndReached={fetchNextPage}
         onEndReachedThreshold={0.2}
         inverted
+        onScrollToIndexFailed={(info) => {
+          const wait = new Promise((resolve) => setTimeout(resolve as () => void, 700));
+          wait.then(() => {
+            sectionList.current?.scrollToLocation({ sectionIndex: info.index, itemIndex: 1 });
+          });
+        }}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={{
+          itemVisiblePercentThreshold: 80, //means if 80% of the item is visible
+        }}
       />
       <Modal visible={isActiveOption} animationType="fade" transparent={true}>
         <TouchableOpacity activeOpacity={1} onPress={() => setIsActiveOption(false)} style={styles.overlay}>
